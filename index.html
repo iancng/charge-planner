@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tesla Charge Planner</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel (to compile JSX in browser) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- App Styles -->
+    <style>
+        body {
+            background-color: #f8fafc; /* slate-50 */
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        /* Custom scrollbar for webkit */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- Icons (Inline SVGs to replace Lucide dependency) ---
+        const IconBase = ({ children, size = 24, className = "" }) => (
+            <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                width={size} 
+                height={size} 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2" 
+                strokeLinecap="round" 
+                strokeLinejoin="round" 
+                className={className}
+            >
+                {children}
+            </svg>
+        );
+
+        const Battery = (props) => <IconBase {...props}><rect width="16" height="10" x="2" y="7" rx="2" ry="2"/><line x1="22" x2="22" y1="11" y2="13"/></IconBase>;
+        const Zap = (props) => <IconBase {...props}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></IconBase>;
+        const Clock = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></IconBase>;
+        const Settings = (props) => <IconBase {...props}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></IconBase>;
+        const Info = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></IconBase>;
+        const ChevronDown = (props) => <IconBase {...props}><path d="m6 9 6 6 6-6"/></IconBase>;
+        const Check = (props) => <IconBase {...props}><path d="M20 6 9 17l-5-5"/></IconBase>;
+        const AlertTriangle = (props) => <IconBase {...props}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></IconBase>;
+        const CarFront = (props) => <IconBase {...props}><path d="m21 8-2 2-1.5-3.7A2 2 0 0 0 15.646 5H8.4a2 2 0 0 0-1.903 1.257L5 10 3 8"/><path d="M7 14h.01"/><path d="M17 14h.01"/><rect width="18" height="8" x="3" y="10" rx="2"/><path d="M5 18v2"/><path d="M19 18v2"/></IconBase>;
+
+        // --- Vehicle Data ---
+        const VEHICLES = [
+            {
+                id: 'm3-sr',
+                model: 'Model 3 (Highland)',
+                trim: 'Standard / RWD',
+                capacity: 60,
+                image: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9b/2023_Tesla_Model_3_Highland_IAA_2023_1.jpg/800px-2023_Tesla_Model_3_Highland_IAA_2023_1.jpg'
+            },
+            {
+                id: 'm3-lr',
+                model: 'Model 3 (Highland)',
+                trim: 'Long Range / Perf.',
+                capacity: 75,
+                image: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9b/2023_Tesla_Model_3_Highland_IAA_2023_1.jpg/800px-2023_Tesla_Model_3_Highland_IAA_2023_1.jpg'
+            },
+            {
+                id: 'm3-sr-old',
+                model: 'Model 3 (Older)',
+                trim: 'Standard Plus (<2021)',
+                capacity: 54,
+                image: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/2018_Tesla_Model_3_Standard_Plus_Front.jpg/800px-2018_Tesla_Model_3_Standard_Plus_Front.jpg'
+            },
+            {
+                id: 'my-sr',
+                model: 'Model Y (2024)',
+                trim: 'Standard RWD',
+                capacity: 60,
+                image: 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Tesla_Model_Y_in_Utrecht_2.jpg/800px-Tesla_Model_Y_in_Utrecht_2.jpg'
+            },
+            {
+                id: 'my-lr',
+                model: 'Model Y (2024)',
+                trim: 'Long Range / Perf.',
+                capacity: 75,
+                image: 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Tesla_Model_Y_in_Utrecht_2.jpg/800px-Tesla_Model_Y_in_Utrecht_2.jpg'
+            },
+            {
+                id: 'ms-lr',
+                model: 'Model S',
+                trim: 'Long Range / Plaid',
+                capacity: 95,
+                image: 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/18/Tesla_Model_S_facelift_%282023%29.jpg/800px-Tesla_Model_S_facelift_%282023%29.jpg'
+            },
+            {
+                id: 'mx-lr',
+                model: 'Model X',
+                trim: 'Long Range / Plaid',
+                capacity: 95,
+                image: 'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Tesla_Model_X_100D_%28F%29.jpg/800px-Tesla_Model_X_100D_%28F%29.jpg'
+            }
+        ];
+
+        // --- Helper Components ---
+
+        const Card = ({ children, className = "" }) => (
+            <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden ${className}`}>
+                {children}
+            </div>
+        );
+
+        const Label = ({ icon: Icon, children }) => (
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-500 mb-2">
+                {Icon && <Icon size={16} />}
+                {children}
+            </div>
+        );
+
+        // --- Main Application ---
+
+        function TeslaChargePlanner() {
+            // --- State ---
+            const [selectedVehicleId, setSelectedVehicleId] = useState('my-lr');
+            const [batteryCapacity, setBatteryCapacity] = useState(75);
+            
+            const [isThreePhase, setIsThreePhase] = useState(true);
+            const [voltage, setVoltage] = useState(220);
+            
+            const [currentSoc, setCurrentSoc] = useState(20);
+            const [targetSoc, setTargetSoc] = useState(100); 
+            
+            const [targetDate, setTargetDate] = useState('');
+            const [hkTime, setHkTime] = useState('');
+
+            // Initialize Target Date to tomorrow 8:00 AM local time on mount
+            useEffect(() => {
+                const now = new Date();
+                const tomorrow = new Date(now);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                tomorrow.setHours(8, 0, 0, 0);
+                
+                // Format for datetime-local input: YYYY-MM-DDTHH:MM
+                const format = (d) => {
+                    const pad = (n) => n < 10 ? '0' + n : n;
+                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                };
+                setTargetDate(format(tomorrow));
+            }, []);
+
+            // Live HK Clock
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    const now = new Date();
+                    setHkTime(now.toLocaleString('en-HK', { 
+                        timeZone: 'Asia/Hong_Kong',
+                        hour: '2-digit', 
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    }));
+                }, 1000);
+                return () => clearInterval(timer);
+            }, []);
+
+            // Update capacity when vehicle changes
+            useEffect(() => {
+                const v = VEHICLES.find(v => v.id === selectedVehicleId);
+                if (v) setBatteryCapacity(v.capacity);
+            }, [selectedVehicleId]);
+
+            const selectedVehicle = VEHICLES.find(v => v.id === selectedVehicleId);
+
+            // --- Calculations ---
+
+            const calculationResult = useMemo(() => {
+                if (!targetDate) return null;
+
+                const now = new Date();
+                const target = new Date(targetDate);
+                const diffMs = target - now;
+                const diffHours = diffMs / (1000 * 60 * 60);
+
+                // Basic Validation
+                if (diffHours <= 0) return { error: "Target time is in the past." };
+
+                // Energy Needed
+                // kWh needed = Capacity * (Target% - Current%)
+                const percentNeeded = Math.max(0, targetSoc - currentSoc);
+                const energyNeededKwh = batteryCapacity * (percentNeeded / 100);
+
+                if (energyNeededKwh <= 0) return { error: "Battery is already at or above target." };
+
+                // We need to find the Amp setting (5A to 16A)
+                // Formula: Power (W) = Voltage * Amps * Phases
+                const phases = isThreePhase ? 3 : 1;
+                
+                let recommendations = [];
+
+                // Calculate time for each Amp setting from 5 to 16
+                for (let amps = 5; amps <= 16; amps++) {
+                    const powerW = voltage * amps * phases;
+                    const powerKw = powerW / 1000;
+                    
+                    // Time = Energy / Power
+                    const timeHours = energyNeededKwh / powerKw;
+                    
+                    const finishDate = new Date(now.getTime() + timeHours * 60 * 60 * 1000);
+                    const timeDiffFromTarget = Math.abs(finishDate - target); 
+
+                    recommendations.push({
+                        amps,
+                        powerKw,
+                        timeHours,
+                        finishDate,
+                        timeDiffFromTarget,
+                        isLate: finishDate > target
+                    });
+                }
+
+                // Sort by closeness to target time
+                const bestFit = recommendations.reduce((prev, curr) => {
+                    return (curr.timeDiffFromTarget < prev.timeDiffFromTarget) ? curr : prev;
+                });
+
+                // Check bounds
+                const maxPowerRecomm = recommendations[recommendations.length - 1]; // 16A
+                const minPowerRecomm = recommendations[0]; // 5A
+
+                // If even 16A is too slow (Late by > 30 mins)
+                if (maxPowerRecomm.isLate && (maxPowerRecomm.finishDate - target) > 30 * 60 * 1000) {
+                    return {
+                        status: 'impossible_slow',
+                        recomm: maxPowerRecomm,
+                        energyNeededKwh,
+                        phases
+                    };
+                }
+
+                // If even 5A is too fast (Finishes way early)
+                if (!minPowerRecomm.isLate && (target - minPowerRecomm.finishDate) > 2 * 60 * 60 * 1000) {
+                    return {
+                        status: 'too_fast',
+                        recomm: minPowerRecomm,
+                        energyNeededKwh,
+                        phases
+                    };
+                }
+
+                return {
+                    status: 'optimal',
+                    recomm: bestFit,
+                    energyNeededKwh,
+                    phases
+                };
+
+            }, [targetDate, batteryCapacity, currentSoc, targetSoc, isThreePhase, voltage]);
+
+            // --- Render ---
+
+            return (
+                <div className="min-h-screen bg-slate-50 text-slate-800 font-sans pb-10">
+                    
+                    {/* Header */}
+                    <header className="bg-slate-900 text-white p-6 pb-12 shadow-lg">
+                        <div className="max-w-md mx-auto flex justify-center text-center">
+                            <div>
+                                <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">
+                                    Tesla Charge Planner
+                                </h1>
+                                <p className="text-slate-400 text-sm mt-1">Optimize for idle fees</p>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="max-w-md mx-auto px-4 -mt-8 space-y-6">
+                        
+                        {/* Vehicle Selection Card */}
+                        <Card>
+                            {/* Image hidden as requested, but logic preserved */}
+                            <div className="p-4 space-y-4">
+                                <div>
+                                    <Label icon={CarFront}>Select Model</Label>
+                                    <div className="relative">
+                                        <select 
+                                            value={selectedVehicleId}
+                                            onChange={(e) => setSelectedVehicleId(e.target.value)}
+                                            className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-lg p-3 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                                        >
+                                            {VEHICLES.map(v => (
+                                                <option key={v.id} value={v.id}>
+                                                    {v.model} - {v.trim}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown className="absolute right-3 top-3.5 text-slate-400 pointer-events-none" size={20} />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <Label icon={Battery}>Capacity (kWh)</Label>
+                                        <input 
+                                            type="number" 
+                                            value={batteryCapacity}
+                                            onChange={(e) => setBatteryCapacity(parseFloat(e.target.value))}
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-center font-mono font-medium focus:ring-2 focus:ring-blue-500 outline-none"
+                                        />
+                                    </div>
+                                    <div>
+                                        <Label icon={Zap}>Voltage (V)</Label>
+                                        <input 
+                                            type="number" 
+                                            value={voltage}
+                                            onChange={(e) => setVoltage(parseFloat(e.target.value))}
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-center font-mono font-medium focus:ring-2 focus:ring-blue-500 outline-none"
+                                        />
+                                    </div>
+                                </div>
+                                
+                                <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                    <span className="text-sm font-medium text-slate-600">Charger Phases</span>
+                                    <div className="flex bg-white rounded-md p-1 border border-slate-200 shadow-sm">
+                                        <button 
+                                            onClick={() => setIsThreePhase(false)}
+                                            className={`px-4 py-1.5 rounded text-xs font-bold transition-colors ${!isThreePhase ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                                        >
+                                            1-Phase
+                                        </button>
+                                        <button 
+                                            onClick={() => setIsThreePhase(true)}
+                                            className={`px-4 py-1.5 rounded text-xs font-bold transition-colors ${isThreePhase ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                                        >
+                                            3-Phase
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </Card>
+
+                        {/* Battery & Time Card */}
+                        <Card className="p-5 space-y-6">
+                            
+                            {/* SOC Sliders */}
+                            <div className="space-y-6">
+                                <div>
+                                    <div className="flex justify-between mb-2">
+                                        <Label icon={Battery}>Current Charge</Label>
+                                        <span className="font-bold text-slate-700">{currentSoc}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" 
+                                        min="0" 
+                                        max="100" 
+                                        value={currentSoc}
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value);
+                                            setCurrentSoc(val);
+                                            if(val > targetSoc) setTargetSoc(val);
+                                        }}
+                                        className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                    />
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between mb-2">
+                                        <Label icon={Check}>Target Charge</Label>
+                                        <span className="font-bold text-slate-700">{targetSoc}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" 
+                                        min="0" 
+                                        max="100" 
+                                        value={targetSoc}
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value);
+                                            setTargetSoc(val);
+                                            if(val < currentSoc) setCurrentSoc(val);
+                                        }}
+                                        className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="pt-4 border-t border-slate-100">
+                                {/* Current Time Display above Input */}
+                                <div className="flex justify-between items-end mb-2">
+                                    <Label icon={Clock}>Target Finish Time</Label>
+                                    <div className="text-xs text-slate-500 mb-2">
+                                        Current: <span className="font-mono text-slate-900 font-semibold">{hkTime}</span>
+                                    </div>
+                                </div>
+                                
+                                <input 
+                                    type="datetime-local" 
+                                    value={targetDate}
+                                    onChange={(e) => setTargetDate(e.target.value)}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 font-mono text-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                />
+                                <p className="text-xs text-slate-400 mt-2 text-center">
+                                    Select when you need the car ready.
+                                </p>
+                            </div>
+                        </Card>
+
+                        {/* Results Section */}
+                        {calculationResult && !calculationResult.error ? (
+                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-6 text-white shadow-xl">
+                                    
+                                    <div className="flex items-center justify-between mb-6 opacity-80">
+                                        <span className="text-xs font-bold tracking-wider uppercase">Recommendation</span>
+                                        <span className="bg-white/10 px-2 py-1 rounded text-xs">
+                                            {calculationResult.recomm.powerKw.toFixed(1)} kW
+                                        </span>
+                                    </div>
+
+                                    <div className="text-center mb-8">
+                                        <div className="text-sm text-slate-400 mb-1">Set Charger To</div>
+                                        <div className="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
+                                            {calculationResult.recomm.amps}A
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4 text-center border-t border-white/10 pt-4">
+                                        <div>
+                                            <div className="text-xs text-slate-400 mb-1">Finish Time</div>
+                                            <div className={`font-mono font-bold text-lg ${calculationResult.recomm.isLate ? 'text-orange-400' : 'text-white'}`}>
+                                                {calculationResult.recomm.finishDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false})}
+                                            </div>
+                                            {calculationResult.recomm.isLate && (
+                                                <div className="text-[10px] text-orange-400">After Target</div>
+                                            )}
+                                        </div>
+                                        <div>
+                                            <div className="text-xs text-slate-400 mb-1">Total Duration</div>
+                                            <div className="font-mono font-bold text-lg">
+                                                {Math.floor(calculationResult.recomm.timeHours)}h {Math.round((calculationResult.recomm.timeHours % 1) * 60)}m
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Status Messages */}
+                                    {calculationResult.status === 'impossible_slow' && (
+                                        <div className="mt-6 bg-red-500/20 border border-red-500/50 rounded-lg p-3 flex items-start gap-3">
+                                            <AlertTriangle className="text-red-400 shrink-0" size={20} />
+                                            <div className="text-sm text-red-200">
+                                                <span className="font-bold block mb-1">Cannot finish in time!</span>
+                                                Even at max speed (16A), you will be late. Increase time or accept lower charge.
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {calculationResult.status === 'too_fast' && (
+                                        <div className="mt-6 bg-blue-500/20 border border-blue-500/50 rounded-lg p-3 flex items-start gap-3">
+                                            <Info className="text-blue-400 shrink-0" size={20} />
+                                            <div className="text-sm text-blue-200">
+                                                <span className="font-bold block mb-1">Plenty of time</span>
+                                                Even at the lowest setting (5A), charging will finish early. This is the slowest possible rate.
+                                            </div>
+                                        </div>
+                                    )}
+                                    
+                                    {calculationResult.status === 'optimal' && (
+                                        <div className="mt-6 bg-emerald-500/20 border border-emerald-500/50 rounded-lg p-3 flex items-start gap-3">
+                                            <Check className="text-emerald-400 shrink-0" size={20} />
+                                            <div className="text-sm text-emerald-200">
+                                                <span className="font-bold block mb-1">Optimized</span>
+                                                This rate finishes closest to your target time to minimize idle fees.
+                                            </div>
+                                        </div>
+                                    )}
+
+                                </div>
+                                
+                                <div className="mt-4 text-center text-xs text-slate-400">
+                                    Calculation based on {calculationResult.energyNeededKwh.toFixed(1)} kWh needed.
+                                    <br/>
+                                    Actual charging speed may vary by grid fluctuations.
+                                </div>
+                            </div>
+                        ) : calculationResult?.error && (
+                            <div className="bg-red-50 text-red-600 p-4 rounded-xl border border-red-100 text-center text-sm font-medium">
+                                {calculationResult.error}
+                            </div>
+                        )}
+
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<TeslaChargePlanner />);
+    </script>
+</body>
+</html>
