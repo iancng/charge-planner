@@ -35,6 +35,15 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #94a3b8; 
         }
+        
+        /* Modal Animation */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .modal-content {
+            animation: fadeIn 0.2s ease-out forwards;
+        }
     </style>
 </head>
 <body>
@@ -43,7 +52,31 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // --- Icons (Inline SVGs to replace Lucide dependency) ---
+        // --- Changelog Data ---
+        const CURRENT_VERSION = "1.1.0";
+        const CHANGELOG = [
+            {
+                version: "1.1.0",
+                date: "2025-12-29",
+                changes: [
+                    "Added support for 13A limitation for older/restricted chargers.",
+                    "Added About & Changelog informational modals.",
+                    "Added Footer."
+                ]
+            },
+            {
+                version: "1.0.0",
+                date: "2025-12-28",
+                changes: [
+                    "Initial Release.",
+                    "Support for Model 3, Y, S, X (Standard/Long Range).",
+                    "Smart Amp calculation algorithm.",
+                    "Hong Kong local time display."
+                ]
+            }
+        ];
+
+        // --- Icons ---
         const IconBase = ({ children, size = 24, className = "" }) => (
             <svg 
                 xmlns="http://www.w3.org/2000/svg" 
@@ -70,6 +103,8 @@
         const Check = (props) => <IconBase {...props}><path d="M20 6 9 17l-5-5"/></IconBase>;
         const AlertTriangle = (props) => <IconBase {...props}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></IconBase>;
         const CarFront = (props) => <IconBase {...props}><path d="m21 8-2 2-1.5-3.7A2 2 0 0 0 15.646 5H8.4a2 2 0 0 0-1.903 1.257L5 10 3 8"/><path d="M7 14h.01"/><path d="M17 14h.01"/><rect width="18" height="8" x="3" y="10" rx="2"/><path d="M5 18v2"/><path d="M19 18v2"/></IconBase>;
+        const XIcon = (props) => <IconBase {...props}><path d="M18 6 6 18"/><path d="m6 6 18 12"/></IconBase>;
+        const Book = (props) => <IconBase {...props}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></IconBase>;
 
         // --- Vehicle Data ---
         const VEHICLES = [
@@ -125,7 +160,6 @@
         ];
 
         // --- Helper Components ---
-
         const Card = ({ children, className = "" }) => (
             <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden ${className}`}>
                 {children}
@@ -139,6 +173,25 @@
             </div>
         );
 
+        const Modal = ({ isOpen, onClose, title, children }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" onClick={onClose}>
+                    <div className="bg-white rounded-2xl w-full max-w-md max-h-[80vh] overflow-y-auto modal-content shadow-2xl" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center p-4 border-b border-slate-100 sticky top-0 bg-white z-10">
+                            <h3 className="text-lg font-bold text-slate-800">{title}</h3>
+                            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1">
+                                <XIcon size={20} />
+                            </button>
+                        </div>
+                        <div className="p-4">
+                            {children}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
         // --- Main Application ---
 
         function TeslaChargePlanner() {
@@ -147,6 +200,7 @@
             const [batteryCapacity, setBatteryCapacity] = useState(75);
             
             const [isThreePhase, setIsThreePhase] = useState(true);
+            const [maxAmps, setMaxAmps] = useState(16); // New state for max amperage
             const [voltage, setVoltage] = useState(220);
             
             const [currentSoc, setCurrentSoc] = useState(20);
@@ -155,14 +209,17 @@
             const [targetDate, setTargetDate] = useState('');
             const [hkTime, setHkTime] = useState('');
 
-            // Initialize Target Date to tomorrow 8:00 AM local time on mount
+            // Modals
+            const [showAbout, setShowAbout] = useState(false);
+            const [showChangelog, setShowChangelog] = useState(false);
+
+            // Initialize Target Date
             useEffect(() => {
                 const now = new Date();
                 const tomorrow = new Date(now);
                 tomorrow.setDate(tomorrow.getDate() + 1);
                 tomorrow.setHours(8, 0, 0, 0);
                 
-                // Format for datetime-local input: YYYY-MM-DDTHH:MM
                 const format = (d) => {
                     const pad = (n) => n < 10 ? '0' + n : n;
                     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -194,7 +251,6 @@
             const selectedVehicle = VEHICLES.find(v => v.id === selectedVehicleId);
 
             // --- Calculations ---
-
             const calculationResult = useMemo(() => {
                 if (!targetDate) return null;
 
@@ -203,30 +259,22 @@
                 const diffMs = target - now;
                 const diffHours = diffMs / (1000 * 60 * 60);
 
-                // Basic Validation
                 if (diffHours <= 0) return { error: "Target time is in the past." };
 
-                // Energy Needed
-                // kWh needed = Capacity * (Target% - Current%)
                 const percentNeeded = Math.max(0, targetSoc - currentSoc);
                 const energyNeededKwh = batteryCapacity * (percentNeeded / 100);
 
                 if (energyNeededKwh <= 0) return { error: "Battery is already at or above target." };
 
-                // We need to find the Amp setting (5A to 16A)
-                // Formula: Power (W) = Voltage * Amps * Phases
                 const phases = isThreePhase ? 3 : 1;
                 
                 let recommendations = [];
 
-                // Calculate time for each Amp setting from 5 to 16
-                for (let amps = 5; amps <= 16; amps++) {
+                // Loop up to maxAmps (13 or 16)
+                for (let amps = 5; amps <= maxAmps; amps++) {
                     const powerW = voltage * amps * phases;
                     const powerKw = powerW / 1000;
-                    
-                    // Time = Energy / Power
                     const timeHours = energyNeededKwh / powerKw;
-                    
                     const finishDate = new Date(now.getTime() + timeHours * 60 * 60 * 1000);
                     const timeDiffFromTarget = Math.abs(finishDate - target); 
 
@@ -240,26 +288,27 @@
                     });
                 }
 
-                // Sort by closeness to target time
+                if (recommendations.length === 0) return { error: "Configuration error." };
+
                 const bestFit = recommendations.reduce((prev, curr) => {
                     return (curr.timeDiffFromTarget < prev.timeDiffFromTarget) ? curr : prev;
                 });
 
-                // Check bounds
-                const maxPowerRecomm = recommendations[recommendations.length - 1]; // 16A
+                const maxPowerRecomm = recommendations[recommendations.length - 1]; // Closest to maxAmps
                 const minPowerRecomm = recommendations[0]; // 5A
 
-                // If even 16A is too slow (Late by > 30 mins)
+                // Check if the fastest possible setting (maxAmps) is still too slow
                 if (maxPowerRecomm.isLate && (maxPowerRecomm.finishDate - target) > 30 * 60 * 1000) {
                     return {
                         status: 'impossible_slow',
                         recomm: maxPowerRecomm,
                         energyNeededKwh,
-                        phases
+                        phases,
+                        limitUsed: maxAmps
                     };
                 }
 
-                // If even 5A is too fast (Finishes way early)
+                // Check if slowest possible setting is still too fast
                 if (!minPowerRecomm.isLate && (target - minPowerRecomm.finishDate) > 2 * 60 * 60 * 1000) {
                     return {
                         status: 'too_fast',
@@ -276,12 +325,12 @@
                     phases
                 };
 
-            }, [targetDate, batteryCapacity, currentSoc, targetSoc, isThreePhase, voltage]);
+            }, [targetDate, batteryCapacity, currentSoc, targetSoc, isThreePhase, voltage, maxAmps]);
 
             // --- Render ---
 
             return (
-                <div className="min-h-screen bg-slate-50 text-slate-800 font-sans pb-10">
+                <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col">
                     
                     {/* Header */}
                     <header className="bg-slate-900 text-white p-6 pb-12 shadow-lg">
@@ -295,11 +344,11 @@
                         </div>
                     </header>
 
-                    <main className="max-w-md mx-auto px-4 -mt-8 space-y-6">
+                    <main className="max-w-md mx-auto px-4 -mt-8 space-y-6 flex-grow w-full">
                         
                         {/* Vehicle Selection Card */}
                         <Card>
-                            {/* Image hidden as requested, but logic preserved */}
+                            {/* Logic preserved */}
                             <div className="p-4 space-y-4">
                                 <div>
                                     <Label icon={CarFront}>Select Model</Label>
@@ -340,21 +389,45 @@
                                     </div>
                                 </div>
                                 
-                                <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-100">
-                                    <span className="text-sm font-medium text-slate-600">Charger Phases</span>
-                                    <div className="flex bg-white rounded-md p-1 border border-slate-200 shadow-sm">
-                                        <button 
-                                            onClick={() => setIsThreePhase(false)}
-                                            className={`px-4 py-1.5 rounded text-xs font-bold transition-colors ${!isThreePhase ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
-                                        >
-                                            1-Phase
-                                        </button>
-                                        <button 
-                                            onClick={() => setIsThreePhase(true)}
-                                            className={`px-4 py-1.5 rounded text-xs font-bold transition-colors ${isThreePhase ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
-                                        >
-                                            3-Phase
-                                        </button>
+                                {/* Charger Configuration Group */}
+                                <div className="space-y-3 pt-2">
+                                    <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                        <span className="text-sm font-medium text-slate-600">Charger Phases</span>
+                                        <div className="flex bg-white rounded-md p-1 border border-slate-200 shadow-sm">
+                                            <button 
+                                                onClick={() => setIsThreePhase(false)}
+                                                className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${!isThreePhase ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                                            >
+                                                1-Phase
+                                            </button>
+                                            <button 
+                                                onClick={() => setIsThreePhase(true)}
+                                                className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${isThreePhase ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                                            >
+                                                3-Phase
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-medium text-slate-600">Max Output</span>
+                                            <span className="text-[10px] text-slate-400">Limit calculation</span>
+                                        </div>
+                                        <div className="flex bg-white rounded-md p-1 border border-slate-200 shadow-sm">
+                                            <button 
+                                                onClick={() => setMaxAmps(13)}
+                                                className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${maxAmps === 13 ? 'bg-orange-500 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                                            >
+                                                13A
+                                            </button>
+                                            <button 
+                                                onClick={() => setMaxAmps(16)}
+                                                className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${maxAmps === 16 ? 'bg-orange-500 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                                            >
+                                                16A
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -427,7 +500,7 @@
 
                         {/* Results Section */}
                         {calculationResult && !calculationResult.error ? (
-                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 mb-6">
                                 <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-6 text-white shadow-xl">
                                     
                                     <div className="flex items-center justify-between mb-6 opacity-80">
@@ -468,7 +541,7 @@
                                             <AlertTriangle className="text-red-400 shrink-0" size={20} />
                                             <div className="text-sm text-red-200">
                                                 <span className="font-bold block mb-1">Cannot finish in time!</span>
-                                                Even at max speed (16A), you will be late. Increase time or accept lower charge.
+                                                Even at max allowed speed ({calculationResult.limitUsed}A), you will be late. Increase time or max amps.
                                             </div>
                                         </div>
                                     )}
@@ -508,6 +581,69 @@
                         )}
 
                     </main>
+
+                    {/* Footer */}
+                    <footer className="bg-white border-t border-slate-200 py-4 px-6 mt-8">
+                        <div className="max-w-md mx-auto flex justify-between items-center text-sm text-slate-500">
+                            <button 
+                                onClick={() => setShowAbout(true)}
+                                className="flex items-center gap-1.5 hover:text-blue-600 transition-colors font-medium"
+                            >
+                                <Book size={16} />
+                                About
+                            </button>
+                            
+                            <button 
+                                onClick={() => setShowChangelog(true)}
+                                className="font-mono text-xs bg-slate-100 px-2 py-1 rounded hover:bg-slate-200 transition-colors"
+                            >
+                                v{CURRENT_VERSION}
+                            </button>
+                        </div>
+                    </footer>
+
+                    {/* About Modal */}
+                    <Modal isOpen={showAbout} onClose={() => setShowAbout(false)} title="About Charge Planner">
+                        <div className="space-y-4 text-slate-600 text-sm leading-relaxed">
+                            <p>
+                                <strong>Tesla Charge Planner</strong> helps you optimize your EV charging sessions to minimize idle fees.
+                            </p>
+                            <p>
+                                By calculating the precise amperage needed to finish charging exactly when you need the car, you avoid finishing too early (and paying idle fees) or too late.
+                            </p>
+                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 space-y-2">
+                                <h4 className="font-bold text-slate-700">How to use:</h4>
+                                <ol className="list-decimal list-inside space-y-1 ml-1">
+                                    <li>Select your Vehicle Model.</li>
+                                    <li>Set your Phase and Max Output (13A/16A).</li>
+                                    <li>Input current battery % and target %.</li>
+                                    <li>Set your Target Finish Time.</li>
+                                    <li>Set your charger to the recommended Amp rate.</li>
+                                </ol>
+                            </div>
+                        </div>
+                    </Modal>
+
+                    {/* Changelog Modal */}
+                    <Modal isOpen={showChangelog} onClose={() => setShowChangelog(false)} title="Version History">
+                        <div className="space-y-6">
+                            {CHANGELOG.map((log, index) => (
+                                <div key={index} className="relative pl-4 border-l-2 border-slate-200">
+                                    <div className="absolute -left-[5px] top-1.5 w-2 h-2 rounded-full bg-slate-300"></div>
+                                    <div className="flex justify-between items-baseline mb-2">
+                                        <span className="font-bold text-slate-800">v{log.version}</span>
+                                        <span className="text-xs text-slate-400 font-mono">{log.date}</span>
+                                    </div>
+                                    <ul className="list-disc list-inside text-sm text-slate-600 space-y-1">
+                                        {log.changes.map((change, i) => (
+                                            <li key={i}>{change}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            ))}
+                        </div>
+                    </Modal>
+
                 </div>
             );
         }
